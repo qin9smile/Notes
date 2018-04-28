@@ -54,7 +54,7 @@ optional func applicationDidBecomeActive(_ application: UIApplication) {
 }
 ```
 **Important：** App不应该依赖状态的改变来保存数据。实现这些代理方法只是为了防止数据的丢失，以及重新唤醒App时的数据恢复。
-![IMAGE](images/WX20180428-142148@2x.png)
+![IMAGE](./images/WX20180428-142148@2x.png  =1058x250)
 
 ### Resolving Runaway Background App Crashes
 iOS使用CPU监控后台应用的CPU使用率，假如超出特定限制则会终止App。 执行正常后台活动的大多数应用程序绝不会遇到这种情况。假如超出了限制，崩溃日志会表明这次终止的原因。
