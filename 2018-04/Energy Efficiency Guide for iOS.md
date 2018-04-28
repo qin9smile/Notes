@@ -54,6 +54,7 @@ optional func applicationDidBecomeActive(_ application: UIApplication) {
 }
 ```
 **Important：** App不应该依赖状态的改变来保存数据。实现这些代理方法只是为了防止数据的丢失，以及重新唤醒App时的数据恢复。
+
 ![IMAGE](images/WX20180428-142148@2x.png  =1058x250)
 
 ### Resolving Runaway Background App Crashes
