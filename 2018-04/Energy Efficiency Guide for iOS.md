@@ -369,12 +369,109 @@ CFRunLoopAddTimer(CFRunLoopGetCurrent(), myRunLoopTimer, kCFRunLoopDefaultMode)
 ```
 
 ### Minimize I/O
+每次您的应用程序执行与I / O相关的任务（如写入文件数据）时，都会使系统脱离空闲状态。通过少写数据，集中写入，明智地使用缓存，调度网络事务以及最大限度地减少总体I / O，可以提高应用的能效和性能。
 
-### React to Low Power Mode on Iphones
+#### Optimize File Access
+* **最小化数据写入。** 只有在内容发生变化时才写入文件，并尽可能将更改汇总为单个写入。如果只有几个字节发生了变化，请避免写出整个文件。如果您经常更改大型文件的小部分，请考虑使用数据库来存储数据。
+* **避免过于频繁访问内存。** 如果您的应用程序保存了状态信息，请仅在状态信息更改时才这样做。尽可能批量更改，以避免频繁编写小的更改。
+* **尽可能地按顺序读取和写入数据。** 在文件中跳转需要花费额外的时间来寻找新的位置。
+* **从文件中读、写大量数据时， 要注意一次性读取太多数据可能会导致其他问题。**例如，读取32 MB文件的全部内容可能会在操作完成之前触发对这些内容的分页。
+* **读写大量指定的数据，考虑使用`dispatch_io`,提供一个基于GCD的异步线程用来处理文件I/O。** 使用`dispatch_io`可以让您高度指定数据需求，因此系统可以优化您的访问。
+* **如果您的数据由随机访问的结构化内容组成，请将其存储在数据库中并使用它进行访问。** 如果您操作的数据量可能增长到超过几兆字节，则使用数据库尤其重要。
+* **了解系统如何缓存文件数据并知道如何优化这些缓存的使用。** [File System Programming Guide](https://developer.apple.com/library/content/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/Introduction/Introduction.html#//apple_ref/doc/uid/TP40010672-CH1-SW1)
 
+### React to Low Power Mode on Iphones(iOS 9+)
+使用节能模式系统会执行如下操作：
+* 降低CPU、GPU性能
+* 暂停后台活动，包括网络操作
+* 降低屏幕亮度
+* 减少自动锁定设备的超时时间
+* 禁用邮件提取
+* 禁用 Motion效果
+* 禁用动画壁纸
+当电量足够时，省电模式会自动禁用。
+当低功耗模式处于活动状态时，您的应用程序应采取额外措施来帮助系统节能。例如，您的应用可以减少动画的使用，降低帧速率，停止位置更新，禁用同步和备份等。
+
+```swift
+/// Register for Power State Notifications
+NSNotificationCenter.defaultCenter().addObserver(
+    self,
+    selector: “yourMethodName:”,
+    name: NSProcessInfoPowerStateDidChangeNotification,
+    object: nil
+)
+
+/// Determine the Power State
+/// If the device’s power state is unknown or if the device doesn’t support Low Power Mode, then this property always has a value of NO.
+if NSProcessInfo.processInfo().lowPowerModeEnabled {
+    // Low Power Mode is enabled. Start reducing activity to conserve energy.
+} else {
+    // Low Power Mode is not enabled.
+}
+```
 
 
 ## Minimize and Defer Networking
+
+### Energy and Networking
+
+#### Device Networking Overhead
+每当您的应用执行网络操作时，都会涉及大量的间接成本。网络硬件（例如蜂窝和Wi-Fi无线电）在默认情况下会关闭以节省电量。必须启动这些资源才能执行活动。然后，他们在整个活动期间保持活动，并在预计会有更多工作的情况下继续工作一段时间。零星的网络交易导致高昂的开销并且可能会很快耗尽设备的电池。
+![Image](%08images/Energy-overhead_due_to_recurring_network_activity.png)
+
+#### Networking Variable Effect on Energy
+* 蜂窝移动网络比Wifi更叫消耗能量
+* 信号状况不佳或波动，可能会导致一些必须要重试的慢或有问题的会话。
+* 弱网带宽意味着无线电必须保持长时间的连接才能执行会话。
+* 由于信号条件和吞吐量可能会有所不同，因此即使地理位置和移动提供商的选择也会影响能耗。
+
+应用程序使用率最终决定了网络流量的发生。应用程序使用网络的效率越高，设备的电池寿命就越长。
+
+### Minimize Networking
+#### Reduce Data Sizes
+##### Reduce Media Quality and Size
+假如App有上传、下载或媒体流内容，降低质量和减小大小，可减少发送和接收的数据量。
+##### 压缩数据大小
+
+#### 避免冗余传输（同样的数据不应该下载第二遍）
+##### 缓存数据
+缓存不常更新的数据，只在数据变化的时候更新，或者用户请求时更新
+`URLCache`和`URLSession`可以用来实现为URL请求的数据缓存数据至内存或硬盘
+##### 可暂停和可恢复的传输
+网络状态差或信号弱时有发生。需要为恢复中断的传输做准备以免相同的数据多次下载。`NSURLSession`可以不需要缓存实现暂停和恢复的功能
+
+#### 错误处理
+不要在网络不可用湿执行网络操作
+
+##### 判断信号情况
+假如网络操作失败，使用`SCNetworkReachability`API来查看主机是否可见。假如是信号问题，提醒用户或者延迟执行。
+```swift
+// Checking the availability of a host
+
+
+import SystemConfiguration
+...
+// Create a reachability object for the desired host
+let hostName = "someHostName"
+let reachability = SCNetworkReachabilityCreateWithName(nil, (hostName as NSString).UTF8String).takeRetainedValue()
+ 
+// Create a place in memory for reachability flags
+var flags: SCNetworkReachabilityFlags = 0
+ 
+// Check the reachability of the host
+SCNetworkReachabilityGetFlags(reachability, &flags)
+ 
+// Check to see if the reachable flag is set
+if ((flags & kSCNetworkReachabilityFlagsReachable) == 0) {
+    // The target host is not reachable
+    // Alert the user or defer the activity
+}
+```
+
+不要永远等待永远不会到来的服务器响应。让用户取消长时间运行或停止的网络操作，并设置合适的超时时间，以便您的应用程序不会不必要地保持连接打开。
+如果交易失败，请在网络可用时重试。当网络再次可用时，使用SCNetworkReachability API来确定或通知。
+### Defer Networking
+### Voice Over IP(VoIP) Best Pratices
 
 ## Use Graphics Animations, and Video Efficiently
 
