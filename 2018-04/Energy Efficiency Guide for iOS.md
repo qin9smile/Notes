@@ -230,7 +230,151 @@ pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND, 0)
 * **CKContainer** 是`NSObject`的子类。默认是`NSQualityOfServiceUserInitiated`。
 * **CKDatabase** 是`NSObject`的子类。默认是`NSQualityOfServiceUserInitiated`。
 
-## Minimize and Defer networking
+### Minimize Timer Use
+通过使用高效的API代替Timers可以降低能源消耗。比如说`URLSession`提供在后台执行URL会话，并在结束后发出通知。如果说必须要使用Timer，请高效使用它们。
+
+#### The High Cost of Timers
+`Timer`允许延迟执行或响应一个操作。`Timer`计时器会一直等到某个时间间隔过去，然后触发，执行特定的操作，比如说向其目标对象发送消息。从空闲状态唤醒系统会产生能源成本。如果定时器导致系统唤醒，则会增加能源成本。
+
+大部分时候App并不需要使用`Timer`。假如在App里使用了`Timer`，考虑到是否真的需要他们。比如说，一些App应该使用`Timer`来响应时间代替轮询状态的改变。其他App应该使用信号量（semaphores）或锁来达到最高效的性能来代替使用`Timer`作为异步工具。一些`Timer`并没有在合适的延时后执行，导致在不需要的时候还在执行。
+
+#### Get Event Notifications Without Using Timers
+某些App使用`Timer`来监控文件内容的改变、网络可用性和其他状态的改变。`Timer`阻止CPU进入或保持空闲状态，这增加了能量使用并消耗电池功率。
+
+
+```swift
+let myFile = @"/Path/To/File"
+let fileDescriptor = open(myFile.fileSystemRepresentation, O_EVTONLY)
+let myQueue = dispatch_get_main_queue()
+let dispatchFlags = DISPATCH_VNODE_DELETE | DISPATCH_VNODE_WRITE
+let mySource = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, fileDescriptor, dispatchFlags, myQueue)
+dispatch_source_set_event_handler(mySource) {
+    self.checkForFile()
+}
+dispatch_resume(mySource)
+```
+
+![Image](%08images/Energy-Obtaining_event_notifications_for_system_services.png)
+
+#### Use GCD Tools for Synchronization Instead of Timers
+`Grand Central Dispatch(GCD)`提供的调度队列、调度信号量和其他异步特性比`Timer`的性能更高。
+
+```swift
+/// Not Recommended
+var workIsDone = false
+ 
+/* thread one */
+func doWork() {
+    /* wait for network ... */
+    workIsDone = true
+}
+ 
+/* thread two: completion handler */  /*** Not Recommended ***/
+func waitForWorkToFinish() {
+    while (!workIsDone) {
+        usleep(100000) /* 100 ms */  /*** Not Recommended ***/
+    }
+    WorkController.workDidFinish()
+}
+
+/// Recommended
+let myQueue = dispatch_queue_create("com.myapp.myq", DISPATCH_QUEUE_SERIAL)
+let block = dispatch_block_create(0) {
+    /* wait for network ... */
+}
+ 
+/* thread one */
+func beginWork() {
+    dispatch_async(myQueue, block)
+}
+ 
+/* thread two */
+func waitForWorkToFinish() {
+    dispatch_block_wait(block, DISPATCH_TIME_FOREVER)
+    WorkController.workDidFinish()
+}
+
+
+
+/// 在一个线程上执行长时间运行的操作，以及长时间运行操作完成后另一个线程上的额外工作。例如，可以使用此技术来阻止应用程序主线程上的阻塞工作。
+dispatch_async(thread2_queue) {
+    /* do long work */
+    dispatch_async(thread1_queue) {
+        /* continue with next work */
+    }
+}
+```
+
+#### If You Must Use a Timer, Employ It Efficiently
+游戏和其他图像密集型App经常基于`Timer`来初始化屏幕或更新动画。许多编程接口将进程延迟至指定时间段。任何传递相对的、绝对的时间期限的方法都可能是Timer API：
+* 高级Timer API包括`Dispatch Timer Source`,`CFRunLoopTimerCreate`和其他`CFRunLoopTimer`方法, `Timer`类,和`performSelector:withObject:afterDelay:`方法
+* 低级Timer API包括`sleep, usleep, nsnosleep, pthread_cond_timedwait, select, poll, kevent, dispatch_after,dispatch_semaphore_wait`.
+
+如果你决定你的App依赖于`Timer`，遵从以下几点：
+* Use timers economically by specifying suitable timeouts.
+* Invalidate repeating timers when they’re no longer needed.
+* Set tolerance for when timers should fire.
+
+##### Specify Suitable Timeouts
+```swift
+/// Not Recommended
+repeat {
+    let timeout = dispatch_time(DISPATCH_TIME_NOW, 500 * Double(NSEC_PER_SEC))
+    let semaphoreReturnValue = dispatch_semaphore_wait(mySemaphore, timeout)
+    if (havePendingWork) {
+        self.doPendingWork()
+    }
+} while true
+
+/// Recommended
+repeat {
+    let timeout = DISPATCH_TIME_FOREVER
+    let semaphoreReturnValue = dispatch_semaphore_wait(mySemaphore, timeout)
+    if (havePendingWork) {
+        self.doPendingWork()
+    }
+} while true
+```
+
+##### Invalidate Repeating Timers You No Longer Need
+```swift
+var myTimer = NSTimer.initWithFireDate(date, interval: 1.0, target: self, selector:"timerFired:", userInfo:nil repeats: true)
+ 
+/* Do work until the timer is no longer needed */
+ 
+myTimer.invalidate() /* Recommended */
+```
+##### Specify a Tolerance for Batching Timers Systemwide
+为定时器启动时的准确度指定容差。系统将使用这种灵活性将定时器的执行时间缩短一段时间（在其容差范围内），以便可以同时执行多个定时器。使用这种方法会显着增加处理器闲置时间，而用户检测到系统响应速度没有变化。
+为定时器设置容差后，会在触发时间和触发时间期间触发（it may fire anytime between its scheduled fire date and the scheduled fire date）。 Timer不会在触发时间之前触发。
+对于重复定时器，下一个触发时间总是会跟初始时间进行计算，来保证正确的执行时间。
+一般将容差设置为重复计时器时间的10%。
+```swift
+/// Set a tolerance for NSTimer timers
+myTimer.tolerance(0.3)
+RunLoop.current.addTimer(myTimer, forMode: .default)
+
+/// Set a tolerance for Dispatch Source Timers
+let myDispatchSourceTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, myQueue)
+dispatch_source_set_timer(myDispatchSourceTimer, DISPATCH_TIME_NOW, 1 * Double(NSEC_PER_SEC), Double(NSEC_PER_SEC) / 10)
+dispatch_source_set_event_handler(myDispatchSourceTimer) {
+    self.timerFired()
+}
+dispatch_resume(myDispatchSourceTimer)
+
+/// Set a tolerance for CFRunLoop timers
+myRunLoopTimer = CFRunLoopTimerCreate(kCFAllocatorDefault, fireDate, 2.0, 0, 0, &timerFired,  NULL)
+CFRunLoopTimerSetTolerance(myRunLoopTimer, 0.2)
+CFRunLoopAddTimer(CFRunLoopGetCurrent(), myRunLoopTimer, kCFRunLoopDefaultMode)
+```
+
+### Minimize I/O
+
+### React to Low Power Mode on Iphones
+
+
+
+## Minimize and Defer Networking
 
 ## Use Graphics Animations, and Video Efficiently
 
