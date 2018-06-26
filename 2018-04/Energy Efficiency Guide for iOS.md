@@ -470,16 +470,107 @@ if ((flags & kSCNetworkReachabilityFlagsReachable) == 0) {
 
 不要永远等待永远不会到来的服务器响应。让用户取消长时间运行或停止的网络操作，并设置合适的超时时间，以便您的应用程序不会不必要地保持连接打开。
 如果交易失败，请在网络可用时重试。当网络再次可用时，使用SCNetworkReachability API来确定或通知。
+
 ### Defer Networking
+
+
+
+
+
+
 ### Voice Over IP(VoIP) Best Pratices
 
+
+
+
+
+
 ## Use Graphics Animations, and Video Efficiently
+### Avoid Extraneous Graphics and Animations
+* 减少app使用的View的数量
+* 减少使用透明度。如果您需要使用不透明度，请避免将其用于频繁更改的内容。否则，能源成本会放大，因为无论何时更改内容，都必须更新背景视图和半透明视图
+* 当您的应用或其内容不可见时消除绘画，例如当您的应用内容被其他视图，剪辑或屏幕外遮挡时。
+* 尽可能为动画使用较低的帧速率。例如，在游戏播放期间高帧速率可能是有意义的，但较低的帧速率可能足够用于菜单屏幕。只有在用户体验需要时才使用高帧速率。
+* 执行动画时使用一致的帧频。例如，如果您的应用每秒显示60帧，请在整个动画生命周期中保持该帧速率。
+* 避免在屏幕上一次使用多个帧率。例如，游戏中没有角色以每秒60帧的速度移动，而天空中的云以每秒30帧的速度移动。两者都使用相同的帧速率，即使这意味着提高其中一个帧速率。
 
 ## Optimize Location and Motion
-## Minimize Peripheral Interaction
 
-## Apple Watch and Energy
+
+
+
+
+
+
+
+
+## Optimize Notifications 
+### Notification Best Practices
+`Notifications`允许App不在前台运行时给用户发送通知。iOS支持本地和远程通知。
+本地通知是由App安排的用语同一设备上的。
+远程通知是将通知发送到Apple推送通知服务，Apple服务会将这些通知发送给用户的设备。
+#### Use Local Notifications Whenever Possible
+如果您的应用需要基于时间的通知而不依赖外部数据，则应使用本地通知为网络硬件留出余地。作为一个好处，即使你的应用程序没有运行，本地通知也会发生。尽管本地通知仍会唤醒闲置设备，因此您应该始终避免不必要地发送通知。
+#### Prioritize Remote Notification Delivery
+服务器向Apple通知服务提供的远程通知包括各种元素，包括有效负载数据，到期日期，优先级等。远程通知支持两个级别的推送优先级。一个立即发送通知。另一个延迟通知的交付，直到节能时间。除非通知确实要求立即交付，否则请使用延期交付方式。
+
+
+## Minimize Peripheral Interaction
+### Bluetooth Best Practices
+`Core Bluetooth`提供了与支持蓝牙低功耗无线技术的设备进行通信的类别。在开发与蓝牙设备交互的应用程序时，请记住蓝牙与其他形式的无线通信（例如Wi-Fi）共享设备的无线电，以通过无线传输信号。此外，与蓝牙设备进行交互不仅仅是在iOS设备上使用能量。它也使用蓝牙设备上的能量。如果你让你的iOS应用节能，蓝牙设备也将受益。
+通常，尽可能减少对无线电的使用，以减少对其他资源和设备电池的影响。这可以通过缓冲数据而不是流式传输来完成，并通过批量处理来完成。
+#### Scan for Devices Only When Needed
+```swift
+/// Scanning for a Bluetooth device and then stopping
+func beginScanningForDevice() {
+    // Create a Core Bluetooth Central Manager object
+    self.myCentralManager = CBCentralManager(delegate: self, queue: nil, options: nil)
+    
+    // Scan for peripherals
+    self.myCentralManager.scanForPeripheralsWithServices(nil, options: nil)
+}
+ 
+func centralManager(central: CBCentralManager, didDiscoverPeripheral peripheral: CBPeripheral, advertisementData: [NSObject: AnyObject]!, RSSI: NSNumber!) {
+    // Connect to the newly discovered device
+    
+    // Stop scanning for devices
+    self.myCentralManager.stopScan()
+}
+```
+#### Minimize Processing of Duplicate Device Discoveries
+`Remote peripheral devices may send out multiple advertising packets per second to announce their presence to listening apps. By default, these packets are combined into a single event and delivered to your app once per peripheral. You should avoid changing this behavior—don’t specify the CBCentralManagerScanOptionAllowDuplicatesKey constant as a scan option when calling the scanForPeripheralsWithServices:options: method. Doing so results in excess events that can drain battery life.`
+
+#### Only Discover Services and Characteristics You Need
+```swift
+// Look for services matching a specific set of UUIDs
+peripheral.discoverServices([firstServiceUUID, secondServiceUUID])
+
+// Look for characterstics matching a specific set of UUIDs for a given service
+peripheral.discoverCharacteristics([firstCharacteristicUUID, secondCharacteristicUUID], forService: interestingService)
+```
+
+#### Request Notifications Rather than Polling for Characteristic Value Changes
+```swift
+/// Subscribing and responding to characteristic value change notifications
+func subscribeToCharacteristic() {
+    // Subscribe to a characteristic value
+    self.peripheral.setNotifyValue(true, forCharacteristic: interestingCharacteristic)
+}
+ 
+func peripheral(peripheral: CBPeripheral, didUpdateNotificationStateForCharacteristic characteristic: CBCharacteristic, error: NSError! {
+    // Process the characteristic value update
+}
+```
+#### Disconnect from a Device When You No Longer Need 
+```swift
+// Unsubscribe from a characteristic value
+self.peripheral.notifyValue(false, forCharacteristic: interestingCharacteristic)
+ 
+// Disconnect from the device
+self.myCentralManager.cancelPeripheralConnection(peripheral)
+```
+
+
+
 
 ## Monitor Energy Use
-
-## Related Resources
